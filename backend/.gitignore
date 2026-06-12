@@ -1,0 +1,6 @@
+node_modules/
+workspaces/*
+!workspaces/.gitkeep
+data/deployments.json
+data/logs/*
+!data/logs/.gitkeep
