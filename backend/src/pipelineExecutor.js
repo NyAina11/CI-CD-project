@@ -68,6 +68,9 @@ function startPipeline(io, { repoUrl, branch, stages }) {
     console.error(`Erreur inattendue dans le pipeline ${id}:`, err);
     db.updateDeployment(id, { status: 'failed', finishedAt: new Date().toISOString() });
     io.to(`run:${id}`).emit('status', { id, status: 'failed' });
+    // Nettoyage même en cas d'erreur inattendue
+    const workspace = path.join(WORKSPACES_DIR, id);
+    try { fs.rmSync(workspace, { recursive: true, force: true }); } catch (_) {}
   });
 
   return id;
@@ -122,6 +125,28 @@ async function executePipeline(io, id, stages) {
   const finalStatus = pipelineFailed ? 'failed' : 'success';
   db.updateDeployment(id, { status: finalStatus, finishedAt: new Date().toISOString() });
   io.to(`run:${id}`).emit('status', { id, status: finalStatus });
+
+  // Nettoyage automatique du workspace après la fin du pipeline.
+  // Les logs sont déjà persistés dans data/logs/<id>.jsonl — le dossier
+  // de travail (clone + node_modules) n'est plus nécessaire.
+  cleanupWorkspace(workspace, id, io);
+}
+
+function cleanupWorkspace(workspace, id, io) {
+  try {
+    fs.rmSync(workspace, { recursive: true, force: true });
+    const entry = {
+      stage: 'system',
+      line: `🗑  Workspace nettoyé (${workspace})`,
+      ts: new Date().toISOString()
+    };
+    // Écriture dans le fichier de logs après fermeture du stream → on rouvre en append
+    const logPath = path.join(LOGS_DIR, `${id}.jsonl`);
+    fs.appendFileSync(logPath, JSON.stringify(entry) + '\n');
+    io.to(`run:${id}`).emit('log', entry);
+  } catch (err) {
+    console.error(`Impossible de nettoyer le workspace ${workspace} :`, err.message);
+  }
 }
 
 /**
